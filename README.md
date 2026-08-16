@@ -1,6 +1,7 @@
 # SyntaxCircus.AspNetCore.Authentication
 
 [![Build](https://github.com/Syntax-Circus/SyntaxCircus.AspNetCore.Authentication/actions/workflows/build.yml/badge.svg)](https://github.com/Syntax-Circus/SyntaxCircus.AspNetCore.Authentication/actions/workflows/build.yml)
+[![NuGet](https://img.shields.io/nuget/v/SyntaxCircus.AspNetCore.Authentication.svg)](https://www.nuget.org/packages/SyntaxCircus.AspNetCore.Authentication)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE.txt)
 
 JWT bearer authentication setup and pluggable API-key authentication for ASP.NET Core APIs — the server side of validating incoming requests. (For a Blazor Server app forwarding its own user's OIDC tokens to a backend API, see [SyntaxCircus.Blazor.Auth](https://github.com/Syntax-Circus/SyntaxCircus.Blazor.Auth) instead — that's a different concern.)

@@ -1,0 +1,12 @@
+global using System.Security.Claims;
+global using Microsoft.AspNetCore.Authentication;
+global using Microsoft.AspNetCore.Authentication.JwtBearer;
+global using Microsoft.AspNetCore.Http;
+global using Microsoft.Extensions.Configuration;
+global using Microsoft.Extensions.DependencyInjection;
+global using Microsoft.Extensions.Logging.Abstractions;
+global using Microsoft.Extensions.Options;
+global using NSubstitute;
+global using Shouldly;
+global using SyntaxCircus.AspNetCore.Authentication;
+global using Xunit;
