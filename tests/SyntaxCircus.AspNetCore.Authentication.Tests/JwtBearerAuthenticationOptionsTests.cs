@@ -10,6 +10,11 @@ public class JwtBearerAuthenticationOptionsTests
         options.Authority.ShouldBe(string.Empty);
         options.Audiences.ShouldBeEmpty();
         options.TrustedIssuers.ShouldBeEmpty();
+        options.RequireHttpsMetadata.ShouldBeNull();
+        options.MapInboundClaims.ShouldBeNull();
+        options.RoleClaimType.ShouldBeNull();
+        options.NameClaimType.ShouldBeNull();
+        options.LogAuthenticationFailuresInDevelopment.ShouldBeFalse();
         options.DeviceToken.ShouldNotBeNull();
     }
 

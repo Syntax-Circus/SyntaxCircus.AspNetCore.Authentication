@@ -126,4 +126,170 @@ public class SyntaxCircusJwtBearerExtensionsTests
 
         options.TokenValidationParameters.ValidIssuers.ShouldBe(["issuer1"]);
     }
+
+    [Fact]
+    public void AddSyntaxCircusJwtBearer_RequireHttpsMetadataConfiguredFalse_SetsRequireHttpsMetadata()
+    {
+        var services = new ServiceCollection();
+        services.AddSyntaxCircusJwtBearer(ConfigurationFrom(new Dictionary<string, string?>
+        {
+            ["Authentication:JwtBearer:RequireHttpsMetadata"] = "false",
+        }));
+
+        using var provider = services.BuildServiceProvider();
+        var options = provider.GetRequiredService<IOptionsMonitor<JwtBearerOptions>>().Get(JwtBearerDefaults.AuthenticationScheme);
+
+        options.RequireHttpsMetadata.ShouldBeFalse();
+    }
+
+    [Fact]
+    public void AddSyntaxCircusJwtBearer_RequireHttpsMetadataNotConfigured_LeavesAspNetCoreDefault()
+    {
+        var services = new ServiceCollection();
+        services.AddSyntaxCircusJwtBearer(ConfigurationFrom([]));
+
+        using var provider = services.BuildServiceProvider();
+        var options = provider.GetRequiredService<IOptionsMonitor<JwtBearerOptions>>().Get(JwtBearerDefaults.AuthenticationScheme);
+
+        options.RequireHttpsMetadata.ShouldBeTrue();
+    }
+
+    [Fact]
+    public void AddSyntaxCircusJwtBearer_MapInboundClaimsConfiguredFalse_SetsMapInboundClaims()
+    {
+        var services = new ServiceCollection();
+        services.AddSyntaxCircusJwtBearer(ConfigurationFrom(new Dictionary<string, string?>
+        {
+            ["Authentication:JwtBearer:MapInboundClaims"] = "false",
+        }));
+
+        using var provider = services.BuildServiceProvider();
+        var options = provider.GetRequiredService<IOptionsMonitor<JwtBearerOptions>>().Get(JwtBearerDefaults.AuthenticationScheme);
+
+        options.MapInboundClaims.ShouldBeFalse();
+    }
+
+    [Fact]
+    public void AddSyntaxCircusJwtBearer_MapInboundClaimsNotConfigured_LeavesAspNetCoreDefault()
+    {
+        var services = new ServiceCollection();
+        services.AddSyntaxCircusJwtBearer(ConfigurationFrom([]));
+
+        using var provider = services.BuildServiceProvider();
+        var options = provider.GetRequiredService<IOptionsMonitor<JwtBearerOptions>>().Get(JwtBearerDefaults.AuthenticationScheme);
+
+        options.MapInboundClaims.ShouldBeTrue();
+    }
+
+    [Fact]
+    public void AddSyntaxCircusJwtBearer_RoleAndNameClaimTypeConfigured_SetsTokenValidationParameters()
+    {
+        var services = new ServiceCollection();
+        services.AddSyntaxCircusJwtBearer(ConfigurationFrom(new Dictionary<string, string?>
+        {
+            ["Authentication:JwtBearer:RoleClaimType"] = "roles",
+            ["Authentication:JwtBearer:NameClaimType"] = "username",
+        }));
+
+        using var provider = services.BuildServiceProvider();
+        var options = provider.GetRequiredService<IOptionsMonitor<JwtBearerOptions>>().Get(JwtBearerDefaults.AuthenticationScheme);
+
+        options.TokenValidationParameters.RoleClaimType.ShouldBe("roles");
+        options.TokenValidationParameters.NameClaimType.ShouldBe("username");
+    }
+
+    [Fact]
+    public void AddSyntaxCircusJwtBearer_RoleAndNameClaimTypeNotConfigured_LeavesDefaults()
+    {
+        var services = new ServiceCollection();
+        services.AddSyntaxCircusJwtBearer(ConfigurationFrom([]));
+
+        using var provider = services.BuildServiceProvider();
+        var options = provider.GetRequiredService<IOptionsMonitor<JwtBearerOptions>>().Get(JwtBearerDefaults.AuthenticationScheme);
+
+        options.TokenValidationParameters.RoleClaimType.ShouldBe(ClaimTypes.Role);
+        options.TokenValidationParameters.NameClaimType.ShouldBe(ClaimTypes.Name);
+    }
+
+    [Fact]
+    public void AddSyntaxCircusJwtBearer_LogAuthenticationFailuresInDevelopmentDefault_LeavesDefaultEventsUntouched()
+    {
+        var services = new ServiceCollection();
+        services.AddSyntaxCircusJwtBearer(ConfigurationFrom([]));
+
+        using var provider = services.BuildServiceProvider();
+        var options = provider.GetRequiredService<IOptionsMonitor<JwtBearerOptions>>().Get(JwtBearerDefaults.AuthenticationScheme);
+
+        // JwtBearerOptions.Events itself defaults to a non-null instance with no-op delegates;
+        // asserting against that default (rather than null) proves we didn't touch it when opted out.
+        options.Events!.OnAuthenticationFailed.ShouldBe(new JwtBearerEvents().OnAuthenticationFailed);
+    }
+
+    [Fact]
+    public void AddSyntaxCircusJwtBearer_LogAuthenticationFailuresInDevelopmentEnabled_AddsHandler()
+    {
+        var services = new ServiceCollection();
+        services.AddSyntaxCircusJwtBearer(ConfigurationFrom(new Dictionary<string, string?>
+        {
+            ["Authentication:JwtBearer:LogAuthenticationFailuresInDevelopment"] = "true",
+        }));
+
+        using var provider = services.BuildServiceProvider();
+        var options = provider.GetRequiredService<IOptionsMonitor<JwtBearerOptions>>().Get(JwtBearerDefaults.AuthenticationScheme);
+
+        options.Events!.OnAuthenticationFailed.ShouldNotBe(new JwtBearerEvents().OnAuthenticationFailed);
+    }
+
+    [Fact]
+    public void AddSyntaxCircusJwtBearer_TrustedIssuersOnlyRepeatsAuthority_DoesNotAddResolver()
+    {
+        var services = new ServiceCollection();
+        services.AddSyntaxCircusJwtBearer(ConfigurationFrom(new Dictionary<string, string?>
+        {
+            ["Authentication:JwtBearer:Authority"] = "https://auth.example.com",
+            ["Authentication:JwtBearer:TrustedIssuers:0"] = "https://auth.example.com",
+        }));
+
+        using var provider = services.BuildServiceProvider();
+        var options = provider.GetRequiredService<IOptionsMonitor<JwtBearerOptions>>().Get(JwtBearerDefaults.AuthenticationScheme);
+
+        // ConfigurationManager itself is still non-null here — ASP.NET Core's own
+        // JwtBearerPostConfigureOptions builds one from Authority regardless — but the resolver is
+        // the signal that our multi-issuer merge logic did (or didn't) engage.
+        options.TokenValidationParameters.IssuerSigningKeyResolver.ShouldBeNull();
+    }
+
+    [Fact]
+    public void AddSyntaxCircusJwtBearer_TrustedIssuersDistinctFromAuthority_AddsResolverAndConfigurationManager()
+    {
+        var services = new ServiceCollection();
+        services.AddSyntaxCircusJwtBearer(ConfigurationFrom(new Dictionary<string, string?>
+        {
+            ["Authentication:JwtBearer:Authority"] = "https://auth.example.com/app-a",
+            ["Authentication:JwtBearer:TrustedIssuers:0"] = "https://auth.example.com/app-b",
+        }));
+
+        using var provider = services.BuildServiceProvider();
+        var options = provider.GetRequiredService<IOptionsMonitor<JwtBearerOptions>>().Get(JwtBearerDefaults.AuthenticationScheme);
+
+        options.TokenValidationParameters.IssuerSigningKeyResolver.ShouldNotBeNull();
+        options.ConfigurationManager.ShouldNotBeNull();
+    }
+
+    [Fact]
+    public void AddSyntaxCircusJwtBearer_EmptyAuthorityWithTrustedIssuers_DoesNotThrow()
+    {
+        var services = new ServiceCollection();
+
+        Should.NotThrow(() => services.AddSyntaxCircusJwtBearer(ConfigurationFrom(new Dictionary<string, string?>
+        {
+            ["Authentication:JwtBearer:TrustedIssuers:0"] = "https://auth.example.com/app-b",
+        })));
+
+        using var provider = services.BuildServiceProvider();
+        var options = provider.GetRequiredService<IOptionsMonitor<JwtBearerOptions>>().Get(JwtBearerDefaults.AuthenticationScheme);
+
+        options.TokenValidationParameters.IssuerSigningKeyResolver.ShouldBeNull();
+        options.ConfigurationManager.ShouldBeNull();
+    }
 }

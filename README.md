@@ -22,8 +22,16 @@ app.UseAuthorization();
 {
   "Authentication": {
     "JwtBearer": {
-      "Authority": "https://auth.example.com",
+      "Authority": "https://auth.example.com/application/o/my-web/",
       "Audiences": ["my-api"],
+      "TrustedIssuers": [
+        "https://auth.example.com/application/o/my-admin/",
+        "https://auth.example.com/application/o/my-mobile/"
+      ],
+      "RequireHttpsMetadata": true,
+      "MapInboundClaims": false,
+      "RoleClaimType": "roles",
+      "LogAuthenticationFailuresInDevelopment": true,
       "DeviceToken": {
         "Enabled": true,
         "SigningKey": "a long random symmetric key",
@@ -36,6 +44,14 @@ app.UseAuthorization();
 ```
 
 Registers a primary scheme that validates tokens against OIDC-discovered signing keys from `Authority`. When `DeviceToken:Enabled` is set, a second symmetric-key scheme is also registered for self-issued device/M2M tokens, and a policy scheme picks between the two automatically per request by sniffing the incoming JWT's `alg` header (`HS256` → device scheme, anything else → the primary OIDC scheme) — callers don't need to know or specify which scheme applies.
+
+`TrustedIssuers` accepts additional issuers beyond `Authority`. Entries that are genuinely distinct OIDC applications — e.g. separate Web/Admin/Mobile registrations against the same identity provider, each with its own signing keys — get their own OIDC discovery (`/.well-known/openid-configuration` + JWKS) so their tokens validate too, not just tokens whose issuer claim happens to differ while sharing `Authority`'s keys. There's no extra discovery round-trip when `TrustedIssuers` is empty or only repeats `Authority`.
+
+A few more optional settings, all of which leave ASP.NET Core's own default untouched when unset:
+- `RequireHttpsMetadata` (bool) — whether OIDC discovery endpoints must be served over HTTPS.
+- `MapInboundClaims` (bool) — set to `false` to preserve raw claim types (e.g. a custom `"roles"` claim) instead of ASP.NET Core's default `ClaimTypes.*` remapping.
+- `RoleClaimType` / `NameClaimType` (string) — override which claim type role-based authorization (`IsInRole`) and `Identity.Name` read from, for tokens using non-default claim names.
+- `LogAuthenticationFailuresInDevelopment` (bool, default `false`) — opt-in dev-only logging of the validation exception on authentication failure, via `OnAuthenticationFailed`.
 
 ## API key
 
