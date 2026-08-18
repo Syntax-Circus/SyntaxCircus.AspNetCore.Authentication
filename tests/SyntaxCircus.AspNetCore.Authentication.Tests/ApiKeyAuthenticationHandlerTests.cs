@@ -4,14 +4,17 @@ namespace SyntaxCircus.AspNetCore.Authentication.Tests;
 
 public class ApiKeyAuthenticationHandlerTests
 {
-    private static async Task<ApiKeyAuthenticationHandler> CreateHandlerAsync(HttpContext context, IApiKeyValidator validator)
+    private static async Task<ApiKeyAuthenticationHandler> CreateHandlerAsync(
+        HttpContext context,
+        IApiKeyValidator validator,
+        string schemeName = ApiKeyAuthenticationHandler.SchemeName)
     {
         var optionsMonitor = Substitute.For<IOptionsMonitor<ApiKeyAuthenticationOptions>>();
         optionsMonitor.CurrentValue.Returns(new ApiKeyAuthenticationOptions());
         optionsMonitor.Get(Arg.Any<string>()).Returns(new ApiKeyAuthenticationOptions());
 
         var handler = new ApiKeyAuthenticationHandler(optionsMonitor, NullLoggerFactory.Instance, UrlEncoder.Default, validator);
-        var scheme = new AuthenticationScheme(ApiKeyAuthenticationHandler.SchemeName, null, typeof(ApiKeyAuthenticationHandler));
+        var scheme = new AuthenticationScheme(schemeName, null, typeof(ApiKeyAuthenticationHandler));
         await handler.InitializeAsync(scheme, context);
         return handler;
     }
@@ -110,5 +113,69 @@ public class ApiKeyAuthenticationHandlerTests
         await handler.AuthenticateAsync();
 
         await validator.Received(1).ValidateAsync("first", Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task AuthenticateAsync_CustomSchemeName_StampsSchemeNameNotConstant()
+    {
+        var context = ContextWithHeader("good-key");
+        var validator = Substitute.For<IApiKeyValidator>();
+        var claims = new List<Claim> { new(ClaimTypes.Name, "caller") };
+        validator.ValidateAsync("good-key", Arg.Any<CancellationToken>()).Returns(ApiKeyValidationResult.Valid(claims));
+        var handler = await CreateHandlerAsync(context, validator, "WorkerApiKey");
+
+        var result = await handler.AuthenticateAsync();
+
+        result.Succeeded.ShouldBeTrue();
+        result.Principal!.Identity!.AuthenticationType.ShouldBe("WorkerApiKey");
+        result.Ticket!.AuthenticationScheme.ShouldBe("WorkerApiKey");
+    }
+
+    [Fact]
+    public async Task AuthenticateAsync_KeyedValidatorRegisteredForScheme_PrefersKeyedValidatorOverUnkeyed()
+    {
+        var keyedValidator = Substitute.For<IApiKeyValidator>();
+        var claims = new List<Claim> { new(ClaimTypes.Name, "keyed-caller") };
+        keyedValidator.ValidateAsync("good-key", Arg.Any<CancellationToken>()).Returns(ApiKeyValidationResult.Valid(claims));
+
+        var unkeyedValidator = Substitute.For<IApiKeyValidator>();
+        unkeyedValidator.ValidateAsync(Arg.Any<string>(), Arg.Any<CancellationToken>()).Returns(ApiKeyValidationResult.Invalid);
+
+        var services = new ServiceCollection();
+        services.AddLogging();
+        services.AddKeyedSingleton(ApiKeyAuthenticationHandler.SchemeName, keyedValidator);
+        var context = new DefaultHttpContext { RequestServices = services.BuildServiceProvider() };
+        context.Request.Headers["X-Api-Key"] = "good-key";
+
+        var handler = await CreateHandlerAsync(context, unkeyedValidator);
+
+        var result = await handler.AuthenticateAsync();
+
+        result.Succeeded.ShouldBeTrue();
+        result.Principal!.FindFirst(ClaimTypes.Name)?.Value.ShouldBe("keyed-caller");
+        await unkeyedValidator.DidNotReceive().ValidateAsync(Arg.Any<string>(), Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task AuthenticateAsync_KeyedValidatorRegisteredForDifferentScheme_FallsBackToUnkeyedValidator()
+    {
+        var otherSchemeValidator = Substitute.For<IApiKeyValidator>();
+
+        var unkeyedValidator = Substitute.For<IApiKeyValidator>();
+        unkeyedValidator.ValidateAsync("good-key", Arg.Any<CancellationToken>()).Returns(ApiKeyValidationResult.Invalid);
+
+        var services = new ServiceCollection();
+        services.AddLogging();
+        services.AddKeyedSingleton("SomeOtherScheme", otherSchemeValidator);
+        var context = new DefaultHttpContext { RequestServices = services.BuildServiceProvider() };
+        context.Request.Headers["X-Api-Key"] = "good-key";
+
+        var handler = await CreateHandlerAsync(context, unkeyedValidator);
+
+        var result = await handler.AuthenticateAsync();
+
+        result.Succeeded.ShouldBeFalse();
+        await unkeyedValidator.Received(1).ValidateAsync("good-key", Arg.Any<CancellationToken>());
+        await otherSchemeValidator.DidNotReceive().ValidateAsync(Arg.Any<string>(), Arg.Any<CancellationToken>());
     }
 }

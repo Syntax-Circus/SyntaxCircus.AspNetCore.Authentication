@@ -57,4 +57,20 @@ public class ConstantApiKeyValidatorTests
 
         result.IsValid.ShouldBeFalse();
     }
+
+    [Fact]
+    public async Task ValidateAsync_InternalSchemeAwareConstructor_ReadsNamedOptions()
+    {
+        var optionsMonitor = Substitute.For<IOptionsMonitor<ApiKeyAuthenticationOptions>>();
+        optionsMonitor.Get("SchemeA").Returns(new ApiKeyAuthenticationOptions { StaticKey = "a-secret" });
+        optionsMonitor.Get("SchemeB").Returns(new ApiKeyAuthenticationOptions { StaticKey = "b-secret" });
+
+        var validatorA = new ConstantApiKeyValidator(optionsMonitor, "SchemeA");
+        var validatorB = new ConstantApiKeyValidator(optionsMonitor, "SchemeB");
+
+        (await validatorA.ValidateAsync("a-secret", TestContext.Current.CancellationToken)).IsValid.ShouldBeTrue();
+        (await validatorA.ValidateAsync("b-secret", TestContext.Current.CancellationToken)).IsValid.ShouldBeFalse();
+        (await validatorB.ValidateAsync("b-secret", TestContext.Current.CancellationToken)).IsValid.ShouldBeTrue();
+        (await validatorB.ValidateAsync("a-secret", TestContext.Current.CancellationToken)).IsValid.ShouldBeFalse();
+    }
 }
