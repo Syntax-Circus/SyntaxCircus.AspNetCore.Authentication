@@ -25,15 +25,21 @@ public sealed class ApiKeyAuthenticationHandler(
             return AuthenticateResult.NoResult();
         }
 
-        var result = await validator.ValidateAsync(apiKey, Context.RequestAborted).ConfigureAwait(false);
+        var effectiveValidator = validator;
+        if (Context.RequestServices is IKeyedServiceProvider keyedProvider)
+        {
+            effectiveValidator = keyedProvider.GetKeyedService<IApiKeyValidator>(Scheme.Name) ?? validator;
+        }
+
+        var result = await effectiveValidator.ValidateAsync(apiKey, Context.RequestAborted).ConfigureAwait(false);
         if (!result.IsValid)
         {
             return AuthenticateResult.Fail("Invalid API key.");
         }
 
-        var identity = new ClaimsIdentity(result.Claims ?? [], SchemeName);
+        var identity = new ClaimsIdentity(result.Claims ?? [], Scheme.Name);
         var principal = new ClaimsPrincipal(identity);
-        var ticket = new AuthenticationTicket(principal, SchemeName);
+        var ticket = new AuthenticationTicket(principal, Scheme.Name);
         return AuthenticateResult.Success(ticket);
     }
 }

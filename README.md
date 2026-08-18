@@ -43,7 +43,7 @@ app.UseAuthorization();
 }
 ```
 
-Registers a primary scheme that validates tokens against OIDC-discovered signing keys from `Authority`. When `DeviceToken:Enabled` is set, a second symmetric-key scheme is also registered for self-issued device/M2M tokens, and a policy scheme picks between the two automatically per request by sniffing the incoming JWT's `alg` header (`HS256` → device scheme, anything else → the primary OIDC scheme) — callers don't need to know or specify which scheme applies.
+Registers a primary scheme (`JwtBearerDefaults.AuthenticationScheme`) that validates tokens against OIDC-discovered signing keys from `Authority`. When `DeviceToken:Enabled` is set, a second symmetric-key scheme (`SyntaxCircusJwtBearerExtensions.DeviceScheme`, `"SyntaxCircusDevice"`) is also registered for self-issued device/M2M tokens, plus a policy scheme (`SyntaxCircusJwtBearerExtensions.PolicyScheme`, `"SyntaxCircusJwt"`, and the app's default scheme in that case) that picks between the two automatically per request by sniffing the incoming JWT's `alg` header (`HS256` → device scheme, anything else → the primary OIDC scheme) — callers don't need to know or specify which scheme applies. `[Authorize]` with no explicit scheme uses the policy scheme automatically; target `DeviceScheme` explicitly (`[Authorize(AuthenticationSchemes = SyntaxCircusJwtBearerExtensions.DeviceScheme)]`) if you need to require a device token specifically.
 
 `TrustedIssuers` accepts additional issuers beyond `Authority`. Entries that are genuinely distinct OIDC applications — e.g. separate Web/Admin/Mobile registrations against the same identity provider, each with its own signing keys — get their own OIDC discovery (`/.well-known/openid-configuration` + JWKS) so their tokens validate too, not just tokens whose issuer claim happens to differ while sharing `Authority`'s keys. There's no extra discovery round-trip when `TrustedIssuers` is empty or only repeats `Authority`.
 
@@ -56,7 +56,7 @@ A few more optional settings, all of which leave ASP.NET Core's own default unto
 ## API key
 
 ```csharp
-builder.Services.AddSyntaxCircusApiKey(builder.Configuration); // binds "Authentication:ApiKey"
+builder.Services.AddSyntaxCircusApiKey(builder.Configuration); // binds "Authentication:ApiKey", scheme "ApiKey"
 ```
 
 ```json
@@ -71,6 +71,41 @@ builder.Services.AddSyntaxCircusApiKey(builder.Configuration);
 ```
 
 Your validator returns `ApiKeyValidationResult.Valid(claims)` or `ApiKeyValidationResult.Invalid` — whatever claims you supply become the resulting `ClaimsPrincipal`, so you can carry caller identity, scopes, or partition keys through to your endpoints.
+
+### Multiple independent API-key schemes
+
+`AddSyntaxCircusApiKey` accepts an optional `schemeName` (defaulting to `ApiKeyAuthenticationHandler.SchemeName`, i.e. `"ApiKey"`), alongside the existing `sectionName`. Call it more than once with distinct pairs to register genuinely independent API-key concerns in the same app — e.g. a worker-to-worker key and an external-agent key, each with its own header name and its own validator:
+
+```csharp
+builder.Services.AddKeyedSingleton<IApiKeyValidator, WorkerApiKeyValidator>("WorkerApiKey");
+builder.Services.AddSyntaxCircusApiKey(builder.Configuration, "Authentication:WorkerApiKey", "WorkerApiKey");
+
+builder.Services.AddKeyedSingleton<IApiKeyValidator, AgentApiKeyValidator>("AgentApiKey");
+builder.Services.AddSyntaxCircusApiKey(builder.Configuration, "Authentication:AgentApiKey", "AgentApiKey");
+```
+
+```json
+{
+  "Authentication": {
+    "WorkerApiKey": { "HeaderName": "X-Worker-Api-Key" },
+    "AgentApiKey": { "HeaderName": "X-Agent-Api-Key" }
+  }
+}
+```
+
+Register each scheme's validator **keyed by its scheme name** (`AddKeyedSingleton<IApiKeyValidator, T>(schemeName)`) before calling `AddSyntaxCircusApiKey` for that scheme — the handler looks up a keyed validator for its own scheme first, falling back to the plain (unkeyed) `IApiKeyValidator` registration only when no keyed match exists. This means a single-scheme app needs no changes at all: with only one scheme registered, there's nothing keyed to find, so it falls straight through to the unkeyed validator exactly as before.
+
+Wire each scheme into authorization separately, e.g.:
+
+```csharp
+builder.Services.AddAuthorization(options =>
+{
+    options.AddPolicy("Worker", p => p.AddAuthenticationSchemes("WorkerApiKey").RequireAuthenticatedUser());
+    options.AddPolicy("Agent", p => p.AddAuthenticationSchemes("AgentApiKey").RequireAuthenticatedUser());
+});
+```
+
+**Caveat:** the built-in `ConstantApiKeyValidator` (used when you don't register your own `IApiKeyValidator`) is only ever wired up *unkeyed*, for exactly one scheme — the first `AddSyntaxCircusApiKey` call in your app. Every additional scheme must supply its own validator (custom, or your own keyed `ConstantApiKeyValidator`-style implementation reading `IOptionsMonitor<ApiKeyAuthenticationOptions>.Get(schemeName)`). Relatedly, if a custom validator injects unnamed `IOptions<ApiKeyAuthenticationOptions>` to read shared config, remember that in a multi-scheme app that unnamed instance reflects whichever scheme's `sectionName` was registered *last* — inject `IOptionsMonitor<ApiKeyAuthenticationOptions>` and call `.Get(schemeName)` instead so you read the config for the right scheme.
 
 ## Contributing
 
