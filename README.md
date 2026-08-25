@@ -53,6 +53,29 @@ A few more optional settings, all of which leave ASP.NET Core's own default unto
 - `RoleClaimType` / `NameClaimType` (string) — override which claim type role-based authorization (`IsInRole`) and `Identity.Name` read from, for tokens using non-default claim names.
 - `LogAuthenticationFailuresInDevelopment` (bool, default `false`) — opt-in dev-only logging of the validation exception on authentication failure, via `OnAuthenticationFailed`.
 
+### Composite opaque and JWT bearer credentials
+
+Some APIs accept both database-backed opaque bearer credentials and OIDC JWTs through the same
+`Authorization: Bearer` header. Register the opaque handler in the application, register this
+package's JWT handler, then use `AddSyntaxCircusCompositeBearer` to route readable JWTs to the JWT
+scheme and every other bearer credential to the opaque handler:
+
+```csharp
+builder.Services.AddAuthentication(options =>
+{
+    options.DefaultAuthenticateScheme = "CompositeBearer";
+    options.DefaultChallengeScheme = "CompositeBearer";
+})
+.AddScheme<MyOpaqueBearerOptions, MyOpaqueBearerHandler>("OpaqueBearer", _ => { })
+.AddSyntaxCircusCompositeBearer("OpaqueBearer", JwtBearerDefaults.AuthenticationScheme, "CompositeBearer");
+
+builder.Services.AddSyntaxCircusJwtBearer(builder.Configuration);
+```
+
+The composite selector only chooses an authentication scheme; it neither validates opaque tokens
+nor maps application claims. Keep database lookup and application-specific authorization mapping in
+the consuming API.
+
 ## API key
 
 ```csharp
