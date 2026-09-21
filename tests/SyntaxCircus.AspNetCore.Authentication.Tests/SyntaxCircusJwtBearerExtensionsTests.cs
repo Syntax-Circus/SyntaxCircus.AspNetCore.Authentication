@@ -241,6 +241,179 @@ public class SyntaxCircusJwtBearerExtensionsTests
     }
 
     [Fact]
+    public void AddSyntaxCircusJwtBearer_LogAuthenticationFailuresEnabled_AddsHandler()
+    {
+        var services = new ServiceCollection();
+        services.AddSyntaxCircusJwtBearer(ConfigurationFrom(new Dictionary<string, string?>
+        {
+            ["Authentication:JwtBearer:LogAuthenticationFailures"] = "true",
+        }));
+
+        using var provider = services.BuildServiceProvider();
+        var options = provider.GetRequiredService<IOptionsMonitor<JwtBearerOptions>>().Get(JwtBearerDefaults.AuthenticationScheme);
+
+        options.Events!.OnAuthenticationFailed.ShouldNotBe(new JwtBearerEvents().OnAuthenticationFailed);
+    }
+
+    [Fact]
+    public async Task AddSyntaxCircusJwtBearer_LogAuthenticationFailuresEnabled_LogsWarningWithExceptionAndConfiguredAudience()
+    {
+        var services = new ServiceCollection();
+        services.AddSyntaxCircusJwtBearer(ConfigurationFrom(new Dictionary<string, string?>
+        {
+            ["Authentication:JwtBearer:LogAuthenticationFailures"] = "true",
+            ["Authentication:JwtBearer:Audiences:0"] = "expected-audience",
+        }));
+
+        using var provider = services.BuildServiceProvider();
+        var jwtOptions = provider.GetRequiredService<IOptionsMonitor<JwtBearerOptions>>().Get(JwtBearerDefaults.AuthenticationScheme);
+
+        var loggerProvider = new CapturingLoggerProvider();
+        using var requestServices = BuildRequestServices(loggerProvider, environmentName: "Production");
+        var exception = new SecurityTokenInvalidAudienceException("bad audience");
+        var context = CreateFailedContext(jwtOptions, requestServices, exception);
+
+        await jwtOptions.Events!.OnAuthenticationFailed(context);
+
+        var entry = loggerProvider.Entries.ShouldHaveSingleItem();
+        entry.Category.ShouldBe("SyntaxCircus.AspNetCore.Authentication.JwtBearer");
+        entry.Level.ShouldBe(LogLevel.Warning);
+        entry.Exception.ShouldBe(exception);
+        entry.Message.ShouldContain("expected-audience");
+    }
+
+    [Fact]
+    public async Task AddSyntaxCircusJwtBearer_LogAuthenticationFailuresInDevelopmentOnlyUnderProduction_LogsNothing()
+    {
+        var services = new ServiceCollection();
+        services.AddSyntaxCircusJwtBearer(ConfigurationFrom(new Dictionary<string, string?>
+        {
+            ["Authentication:JwtBearer:LogAuthenticationFailuresInDevelopment"] = "true",
+        }));
+
+        using var provider = services.BuildServiceProvider();
+        var jwtOptions = provider.GetRequiredService<IOptionsMonitor<JwtBearerOptions>>().Get(JwtBearerDefaults.AuthenticationScheme);
+
+        var loggerProvider = new CapturingLoggerProvider();
+        using var requestServices = BuildRequestServices(loggerProvider, environmentName: "Production");
+        var context = CreateFailedContext(jwtOptions, requestServices, new SecurityTokenInvalidAudienceException("bad audience"));
+
+        await jwtOptions.Events!.OnAuthenticationFailed(context);
+
+        loggerProvider.Entries.ShouldBeEmpty();
+    }
+
+    [Fact]
+    public async Task AddSyntaxCircusJwtBearer_BothLogFlagsSetInDevelopment_LogsExactlyOnceAtWarning()
+    {
+        var services = new ServiceCollection();
+        services.AddSyntaxCircusJwtBearer(ConfigurationFrom(new Dictionary<string, string?>
+        {
+            ["Authentication:JwtBearer:LogAuthenticationFailuresInDevelopment"] = "true",
+            ["Authentication:JwtBearer:LogAuthenticationFailures"] = "true",
+        }));
+
+        using var provider = services.BuildServiceProvider();
+        var jwtOptions = provider.GetRequiredService<IOptionsMonitor<JwtBearerOptions>>().Get(JwtBearerDefaults.AuthenticationScheme);
+
+        var loggerProvider = new CapturingLoggerProvider();
+        using var requestServices = BuildRequestServices(loggerProvider, environmentName: "Development");
+        var context = CreateFailedContext(jwtOptions, requestServices, new SecurityTokenInvalidAudienceException("bad audience"));
+
+        await jwtOptions.Events!.OnAuthenticationFailed(context);
+
+        var entry = loggerProvider.Entries.ShouldHaveSingleItem();
+        entry.Level.ShouldBe(LogLevel.Warning);
+    }
+
+    [Fact]
+    public async Task AddSyntaxCircusJwtBearer_PreviouslyConfiguredOnAuthenticationFailed_StillRuns()
+    {
+        var previousHandlerRan = false;
+        var services = new ServiceCollection();
+
+        // Registered before AddSyntaxCircusJwtBearer so its Configure<JwtBearerOptions> delegate runs
+        // first, matching the documented "chains to any handler you've already configured at the
+        // point AddSyntaxCircusJwtBearer runs" behavior.
+        services.Configure<JwtBearerOptions>(JwtBearerDefaults.AuthenticationScheme, bearerOptions =>
+        {
+            bearerOptions.Events ??= new JwtBearerEvents();
+            bearerOptions.Events.OnAuthenticationFailed = _ =>
+            {
+                previousHandlerRan = true;
+                return Task.CompletedTask;
+            };
+        });
+        services.AddSyntaxCircusJwtBearer(ConfigurationFrom(new Dictionary<string, string?>
+        {
+            ["Authentication:JwtBearer:LogAuthenticationFailures"] = "true",
+        }));
+
+        using var provider = services.BuildServiceProvider();
+        var jwtOptions = provider.GetRequiredService<IOptionsMonitor<JwtBearerOptions>>().Get(JwtBearerDefaults.AuthenticationScheme);
+
+        var loggerProvider = new CapturingLoggerProvider();
+        using var requestServices = BuildRequestServices(loggerProvider, environmentName: "Production");
+        var context = CreateFailedContext(jwtOptions, requestServices, new SecurityTokenInvalidAudienceException("bad audience"));
+
+        await jwtOptions.Events!.OnAuthenticationFailed(context);
+
+        previousHandlerRan.ShouldBeTrue();
+        loggerProvider.Entries.ShouldHaveSingleItem();
+    }
+
+    private static AuthenticationFailedContext CreateFailedContext(
+        JwtBearerOptions options,
+        IServiceProvider requestServices,
+        Exception exception)
+    {
+        var httpContext = new DefaultHttpContext { RequestServices = requestServices };
+        var scheme = new AuthenticationScheme(JwtBearerDefaults.AuthenticationScheme, null, typeof(JwtBearerHandler));
+        return new AuthenticationFailedContext(httpContext, scheme, options) { Exception = exception };
+    }
+
+    private static ServiceProvider BuildRequestServices(CapturingLoggerProvider loggerProvider, string environmentName)
+    {
+        var hostEnvironment = Substitute.For<IHostEnvironment>();
+        hostEnvironment.EnvironmentName.Returns(environmentName);
+
+        var services = new ServiceCollection();
+        services.AddLogging(builder => builder.AddProvider(loggerProvider));
+        services.AddSingleton(hostEnvironment);
+        return services.BuildServiceProvider();
+    }
+
+    private sealed record CapturedLogEntry(string Category, LogLevel Level, string Message, Exception? Exception);
+
+    private sealed class CapturingLoggerProvider : ILoggerProvider
+    {
+        public List<CapturedLogEntry> Entries { get; } = [];
+
+        public ILogger CreateLogger(string categoryName) => new CapturingLogger(categoryName, Entries);
+
+        public void Dispose()
+        {
+        }
+
+        private sealed class CapturingLogger(string category, List<CapturedLogEntry> entries) : ILogger
+        {
+            public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+
+            public bool IsEnabled(LogLevel logLevel) => true;
+
+            public void Log<TState>(
+                LogLevel logLevel,
+                EventId eventId,
+                TState state,
+                Exception? exception,
+                Func<TState, Exception?, string> formatter)
+            {
+                entries.Add(new CapturedLogEntry(category, logLevel, formatter(state, exception), exception));
+            }
+        }
+    }
+
+    [Fact]
     public void AddSyntaxCircusJwtBearer_TrustedIssuersOnlyRepeatsAuthority_DoesNotAddResolver()
     {
         var services = new ServiceCollection();

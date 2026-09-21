@@ -32,6 +32,7 @@ app.UseAuthorization();
       "MapInboundClaims": false,
       "RoleClaimType": "roles",
       "LogAuthenticationFailuresInDevelopment": true,
+      "LogAuthenticationFailures": false,
       "DeviceToken": {
         "Enabled": true,
         "SigningKey": "a long random symmetric key",
@@ -52,6 +53,7 @@ A few more optional settings, all of which leave ASP.NET Core's own default unto
 - `MapInboundClaims` (bool) — set to `false` to preserve raw claim types (e.g. a custom `"roles"` claim) instead of ASP.NET Core's default `ClaimTypes.*` remapping.
 - `RoleClaimType` / `NameClaimType` (string) — override which claim type role-based authorization (`IsInRole`) and `Identity.Name` read from, for tokens using non-default claim names.
 - `LogAuthenticationFailuresInDevelopment` (bool, default `false`) — opt-in dev-only logging of the validation exception on authentication failure, via `OnAuthenticationFailed`.
+- `LogAuthenticationFailures` (bool, default `false`) — opt-in, **production-safe** logging of authentication failures in every environment, at `Warning`, via the same `OnAuthenticationFailed` hook. Logs the exception plus this scheme's configured audiences/issuers (configuration values, not secrets) — never the token or any request header. Useful for diagnosing an opaque `WWW-Authenticate: Bearer error="invalid_token"` reaching a caller with nothing in the server logs. If both this and `LogAuthenticationFailuresInDevelopment` are set, only one entry is logged per failure (at `Warning`).
 
 ### Composite opaque and JWT bearer credentials
 
