@@ -15,6 +15,7 @@ public class JwtBearerAuthenticationOptionsTests
         options.RoleClaimType.ShouldBeNull();
         options.NameClaimType.ShouldBeNull();
         options.LogAuthenticationFailuresInDevelopment.ShouldBeFalse();
+        options.LogAuthenticationFailures.ShouldBeFalse();
         options.DeviceToken.ShouldNotBeNull();
     }
 

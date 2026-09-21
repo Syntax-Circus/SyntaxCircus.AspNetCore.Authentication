@@ -72,6 +72,29 @@ public sealed class JwtBearerAuthenticationOptions
     /// </summary>
     public bool LogAuthenticationFailuresInDevelopment { get; set; }
 
+    /// <summary>
+    /// When <see langword="true"/>, an <c>OnAuthenticationFailed</c> handler is added to the primary
+    /// scheme that logs the validation exception at
+    /// <see cref="Microsoft.Extensions.Logging.LogLevel.Warning"/> in every environment — not just
+    /// Development, unlike <see cref="LogAuthenticationFailuresInDevelopment"/> — via the same
+    /// category, <c>"SyntaxCircus.AspNetCore.Authentication.JwtBearer"</c> (resolved per-request from
+    /// <c>HttpContext.RequestServices</c>'s <c>ILoggerFactory</c>; a no-op if unavailable). The logged
+    /// message includes the exception (type, message, and IDX code), and this scheme's configured
+    /// <c>ValidAudiences</c>/<c>ValidAudience</c> and <c>ValidIssuers</c>/<c>ValidIssuer</c>
+    /// (comma-joined configuration values, not secrets) — this is intentionally production-safe: the
+    /// token, the <c>Authorization</c> header, and other request headers are never logged. Intended
+    /// for diagnosing failures that would otherwise reach the caller as an opaque
+    /// <c>WWW-Authenticate: Bearer error="invalid_token"</c> with no server-side trace, e.g. the
+    /// IdentityModel quirk where <c>SecurityTokenInvalidAudienceException.InvalidAudience</c> isn't
+    /// populated by <c>JsonWebTokenHandler</c>. Defaults to <see langword="false"/> (opt-in) so
+    /// upgrading without touching config produces no behavior change. When both this and
+    /// <see cref="LogAuthenticationFailuresInDevelopment"/> are <see langword="true"/>, only a single
+    /// handler is installed and only one entry is logged per failure, at Warning (not Warning and
+    /// Debug) — same chaining behavior as <see cref="LogAuthenticationFailuresInDevelopment"/>
+    /// otherwise.
+    /// </summary>
+    public bool LogAuthenticationFailures { get; set; }
+
     /// <summary>Optional self-issued symmetric-key "device"/M2M JWT scheme, dispatched to alongside the primary OIDC scheme.</summary>
     public DeviceTokenOptions DeviceToken { get; set; } = new();
 

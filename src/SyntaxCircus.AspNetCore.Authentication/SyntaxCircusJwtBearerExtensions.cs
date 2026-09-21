@@ -87,9 +87,12 @@ public static class SyntaxCircusJwtBearerExtensions
                 ConfigureMultiIssuerKeyDiscovery(bearerOptions, options, additionalIssuers, configurationManagerFactory);
             }
 
-            if (options.LogAuthenticationFailuresInDevelopment)
+            if (options.LogAuthenticationFailuresInDevelopment || options.LogAuthenticationFailures)
             {
-                ConfigureAuthenticationFailedDiagnostics(bearerOptions);
+                ConfigureAuthenticationFailedDiagnostics(
+                    bearerOptions,
+                    options.LogAuthenticationFailuresInDevelopment,
+                    options.LogAuthenticationFailures);
             }
         });
 
@@ -197,22 +200,44 @@ public static class SyntaxCircusJwtBearerExtensions
     }
 
     /// <summary>
-    /// Adds a dev-only <c>OnAuthenticationFailed</c> handler that logs the validation exception when
-    /// <see cref="IHostEnvironment.IsDevelopment"/> is true, chaining to (running before) any handler
-    /// already configured on <paramref name="bearerOptions"/>.
+    /// Category shared by both <c>OnAuthenticationFailed</c> diagnostics hooks below, so consumers can
+    /// target one log filter regardless of which flag(s) are enabled.
     /// </summary>
-    private static void ConfigureAuthenticationFailedDiagnostics(JwtBearerOptions bearerOptions)
+    private const string DiagnosticsLoggerCategory = "SyntaxCircus.AspNetCore.Authentication.JwtBearer";
+
+    /// <summary>
+    /// Installs a single chained <c>OnAuthenticationFailed</c> handler covering
+    /// <see cref="JwtBearerAuthenticationOptions.LogAuthenticationFailuresInDevelopment"/> and
+    /// <see cref="JwtBearerAuthenticationOptions.LogAuthenticationFailures"/> (only called when at
+    /// least one is <see langword="true"/>), chaining to (running before) any handler already
+    /// configured on <paramref name="bearerOptions"/>. When <paramref name="logAlways"/> is set, every
+    /// failure in every environment logs once at Warning with configuration context (valid
+    /// audiences/issuers) and <paramref name="logInDevelopment"/> is ignored for that failure, so both
+    /// flags together still produce exactly one log entry rather than Warning and Debug.
+    /// </summary>
+    private static void ConfigureAuthenticationFailedDiagnostics(
+        JwtBearerOptions bearerOptions,
+        bool logInDevelopment,
+        bool logAlways)
     {
         bearerOptions.Events ??= new JwtBearerEvents();
         var previousOnAuthenticationFailed = bearerOptions.Events.OnAuthenticationFailed;
         bearerOptions.Events.OnAuthenticationFailed = async context =>
         {
-            var environment = context.HttpContext.RequestServices.GetService<IHostEnvironment>();
-            if (environment?.IsDevelopment() == true)
+            var logger = context.HttpContext.RequestServices.GetService<ILoggerFactory>()
+                ?.CreateLogger(DiagnosticsLoggerCategory);
+
+            if (logAlways)
             {
-                var logger = context.HttpContext.RequestServices.GetService<ILoggerFactory>()
-                    ?.CreateLogger("SyntaxCircus.AspNetCore.Authentication.JwtBearer");
-                logger?.LogDebug(context.Exception, "JWT bearer authentication failed.");
+                LogFailureWithConfiguration(logger, context);
+            }
+            else if (logInDevelopment)
+            {
+                var environment = context.HttpContext.RequestServices.GetService<IHostEnvironment>();
+                if (environment?.IsDevelopment() == true)
+                {
+                    logger?.LogDebug(context.Exception, "JWT bearer authentication failed.");
+                }
             }
 
             if (previousOnAuthenticationFailed is not null)
@@ -220,5 +245,46 @@ public static class SyntaxCircusJwtBearerExtensions
                 await previousOnAuthenticationFailed(context);
             }
         };
+    }
+
+    /// <summary>
+    /// Logs a JWT bearer authentication failure at Warning, including the exception, its type name,
+    /// and this scheme's configured valid audiences/issuers (configuration values, not secrets — the
+    /// token and request headers are never logged). No-op if <paramref name="logger"/> is
+    /// <see langword="null"/> (no <c>ILoggerFactory</c> registered).
+    /// </summary>
+    private static void LogFailureWithConfiguration(ILogger? logger, AuthenticationFailedContext context)
+    {
+        if (logger is null)
+        {
+            return;
+        }
+
+        var validationParameters = context.Options.TokenValidationParameters;
+        var validAudiences = FormatConfiguredValues(validationParameters.ValidAudiences, validationParameters.ValidAudience);
+        var validIssuers = FormatConfiguredValues(validationParameters.ValidIssuers, validationParameters.ValidIssuer);
+
+        logger.LogWarning(
+            context.Exception,
+            "JWT bearer authentication failed ({ExceptionType}). ValidAudiences={ValidAudiences} ValidIssuers={ValidIssuers}",
+            context.Exception.GetType().Name,
+            validAudiences,
+            validIssuers);
+    }
+
+    /// <summary>
+    /// Merges a <c>TokenValidationParameters</c> plural/singular pair (e.g. <c>ValidAudiences</c> and
+    /// <c>ValidAudience</c>) into one comma-joined string for logging, de-duplicating and skipping
+    /// empty entries.
+    /// </summary>
+    private static string FormatConfiguredValues(IEnumerable<string>? values, string? singleValue)
+    {
+        var merged = (values ?? []).Where(value => !string.IsNullOrEmpty(value)).ToList();
+        if (!string.IsNullOrEmpty(singleValue) && !merged.Contains(singleValue, StringComparer.Ordinal))
+        {
+            merged.Add(singleValue);
+        }
+
+        return merged.Count > 0 ? string.Join(", ", merged) : "(none)";
     }
 }
