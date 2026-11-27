@@ -1,3 +1,6 @@
+using System.Security.Cryptography;
+using Microsoft.IdentityModel.JsonWebTokens;
+
 namespace SyntaxCircus.AspNetCore.Authentication.Tests;
 
 public class SyntaxCircusJwtBearerExtensionsTests
@@ -362,6 +365,65 @@ public class SyntaxCircusJwtBearerExtensionsTests
         loggerProvider.Entries.ShouldHaveSingleItem();
     }
 
+    [Theory]
+    [InlineData("wrong-audience", typeof(SecurityTokenInvalidAudienceException))]
+    [InlineData("wrong-issuer", typeof(SecurityTokenInvalidIssuerException))]
+    [InlineData("expired", typeof(SecurityTokenExpiredException))]
+    [InlineData("bad-signature", typeof(SecurityTokenSignatureKeyNotFoundException))]
+    public async Task AddSyntaxCircusJwtBearer_RealTokenFailsValidation_LogOmitsTokenAndAuthorizationHeader(
+        string failure,
+        Type expectedException)
+    {
+        var signingKey = new SymmetricSecurityKey(RandomNumberGenerator.GetBytes(32));
+        var token = new JsonWebTokenHandler().CreateToken(new SecurityTokenDescriptor
+        {
+            Issuer = failure == "wrong-issuer" ? "other-issuer" : "expected-issuer",
+            Audience = failure == "wrong-audience" ? "other-audience" : "expected-audience",
+            Subject = new ClaimsIdentity([new Claim("sub", "canary-subject"), new Claim("email", "canary@example.test")]),
+            NotBefore = DateTime.UtcNow.AddHours(-2),
+            IssuedAt = DateTime.UtcNow.AddHours(-2),
+            Expires = DateTime.UtcNow.AddMinutes(failure == "expired" ? -30 : 30),
+            SigningCredentials = new SigningCredentials(
+                failure == "bad-signature" ? new SymmetricSecurityKey(RandomNumberGenerator.GetBytes(32)) : signingKey,
+                SecurityAlgorithms.HmacSha256),
+        });
+
+        var loggerProvider = new CapturingLoggerProvider();
+        var services = new ServiceCollection();
+        services.AddLogging(builder => builder.SetMinimumLevel(LogLevel.Trace).AddProvider(loggerProvider));
+        services.AddSyntaxCircusJwtBearer(ConfigurationFrom(new Dictionary<string, string?>
+        {
+            ["Authentication:JwtBearer:LogAuthenticationFailures"] = "true",
+            ["Authentication:JwtBearer:Audiences:0"] = "expected-audience",
+            ["Authentication:JwtBearer:TrustedIssuers:0"] = "expected-issuer",
+        }));
+        services.PostConfigure<JwtBearerOptions>(
+            JwtBearerDefaults.AuthenticationScheme,
+            options => options.TokenValidationParameters.IssuerSigningKey = signingKey);
+
+        await using var provider = services.BuildServiceProvider();
+        await using var scope = provider.CreateAsyncScope();
+        var httpContext = new DefaultHttpContext { RequestServices = scope.ServiceProvider };
+        var authorizationHeader = $"Bearer {token}";
+        httpContext.Request.Headers.Authorization = authorizationHeader;
+
+        var result = await httpContext.AuthenticateAsync(JwtBearerDefaults.AuthenticationScheme);
+
+        result.Succeeded.ShouldBeFalse();
+        var entry = loggerProvider.Entries
+            .Where(e => e.Category == "SyntaxCircus.AspNetCore.Authentication.JwtBearer")
+            .ShouldHaveSingleItem();
+        entry.Exception.ShouldNotBeNull().ShouldBeOfType(expectedException);
+
+        var logged = string.Join('\n', entry.Message, entry.Properties, entry.Exception.ToString());
+        var forbidden = token.Split('.').Append(token).Append(authorizationHeader)
+            .Append("canary-subject").Append("canary@example.test");
+        foreach (var secret in forbidden)
+        {
+            logged.ShouldNotContain(secret, Case.Sensitive);
+        }
+    }
+
     private static AuthenticationFailedContext CreateFailedContext(
         JwtBearerOptions options,
         IServiceProvider requestServices,
@@ -383,7 +445,7 @@ public class SyntaxCircusJwtBearerExtensionsTests
         return services.BuildServiceProvider();
     }
 
-    private sealed record CapturedLogEntry(string Category, LogLevel Level, string Message, Exception? Exception);
+    private sealed record CapturedLogEntry(string Category, LogLevel Level, string Message, Exception? Exception, string Properties);
 
     private sealed class CapturingLoggerProvider : ILoggerProvider
     {
@@ -408,7 +470,10 @@ public class SyntaxCircusJwtBearerExtensionsTests
                 Exception? exception,
                 Func<TState, Exception?, string> formatter)
             {
-                entries.Add(new CapturedLogEntry(category, logLevel, formatter(state, exception), exception));
+                var properties = state is IEnumerable<KeyValuePair<string, object?>> pairs
+                    ? string.Join('\n', pairs.Select(pair => $"{pair.Key}={pair.Value}"))
+                    : string.Empty;
+                entries.Add(new CapturedLogEntry(category, logLevel, formatter(state, exception), exception, properties));
             }
         }
     }

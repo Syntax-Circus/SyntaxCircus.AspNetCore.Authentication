@@ -249,9 +249,10 @@ public static class SyntaxCircusJwtBearerExtensions
 
     /// <summary>
     /// Logs a JWT bearer authentication failure at Warning, including the exception, its type name,
-    /// and this scheme's configured valid audiences/issuers (configuration values, not secrets — the
-    /// token and request headers are never logged). No-op if <paramref name="logger"/> is
-    /// <see langword="null"/> (no <c>ILoggerFactory</c> registered).
+    /// and this scheme's configured valid audiences/issuers (configuration values, not secrets). The
+    /// raw token and request headers are not added, though the exception message can include values
+    /// taken from the token. No-op if <paramref name="logger"/> is <see langword="null"/> (no
+    /// <c>ILoggerFactory</c> registered).
     /// </summary>
     private static void LogFailureWithConfiguration(ILogger? logger, AuthenticationFailedContext context)
     {
