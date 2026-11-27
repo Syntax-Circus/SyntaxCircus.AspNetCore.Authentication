@@ -53,7 +53,29 @@ A few more optional settings, all of which leave ASP.NET Core's own default unto
 - `MapInboundClaims` (bool) — set to `false` to preserve raw claim types (e.g. a custom `"roles"` claim) instead of ASP.NET Core's default `ClaimTypes.*` remapping.
 - `RoleClaimType` / `NameClaimType` (string) — override which claim type role-based authorization (`IsInRole`) and `Identity.Name` read from, for tokens using non-default claim names.
 - `LogAuthenticationFailuresInDevelopment` (bool, default `false`) — opt-in dev-only logging of the validation exception on authentication failure, via `OnAuthenticationFailed`.
-- `LogAuthenticationFailures` (bool, default `false`) — opt-in, **production-safe** logging of authentication failures in every environment, at `Warning`, via the same `OnAuthenticationFailed` hook. Logs the exception plus this scheme's configured audiences/issuers (configuration values, not secrets) — never the token or any request header. Useful for diagnosing an opaque `WWW-Authenticate: Bearer error="invalid_token"` reaching a caller with nothing in the server logs. If both this and `LogAuthenticationFailuresInDevelopment` are set, only one entry is logged per failure (at `Warning`).
+- `LogAuthenticationFailures` (bool, default `false`) — opt-in logging of authentication failures in every environment, at `Warning`, via the same `OnAuthenticationFailed` hook. See [Logging authentication failures](#logging-authentication-failures) before enabling it.
+
+### Logging authentication failures
+
+A rejected token usually leaves no reason in the logs when `Microsoft.AspNetCore` is filtered to `Warning`, because `JwtBearerHandler` logs the validation failure at `Information`. To log it at `Warning`, enable the option in the environment you're diagnosing. The sample above leaves it off. As an environment variable:
+
+```text
+Authentication__JwtBearer__LogAuthenticationFailures=true
+```
+
+Each failure logs the exception, plus the primary scheme's configured `ValidAudience`/`ValidAudiences` and `ValidIssuer`/`ValidIssuers`, in the `SyntaxCircus.AspNetCore.Authentication.JwtBearer` category. Issuers learned from OIDC discovery aren't part of that configured list. If both logging options are set, only one entry is logged per failure, at `Warning`.
+
+**What can appear in the log.** The library never adds the raw token, the `Authorization` header or other request headers to the entry. It does log the whole exception, and exception messages can include values taken from the token, such as its issuer, expiry time or key ID. Anyone can send a request with a made-up token, so treat those values as untrusted, and expect these `Warning` entries to be something callers can trigger at will.
+
+- Exceptions thrown by your own token event handlers can be logged too, including anything you put in their messages.
+- IdentityModel removes audience values from its audience errors by default. That's why a response can say `The audience '(null)' is invalid`. The `Switch.Microsoft.IdentityModel.DoNotScrubExceptions` AppContext switch restores them, which also puts them in this log.
+- Leave `IdentityModelEventSource.ShowPII` off. With it on, exception details can include parts of a malformed token.
+
+**What it doesn't cover.**
+
+- Only the primary scheme. The `DeviceScheme` registered by `DeviceToken:Enabled` doesn't get this handler.
+- Only `OnAuthenticationFailed`. A request with no token doesn't raise it, and neither does an authorization failure (403). This package doesn't add `OnChallenge` or `OnForbidden` logging.
+- The handler runs before any `OnAuthenticationFailed` handler already configured when `AddSyntaxCircusJwtBearer` runs. If your code later replaces `JwtBearerOptions.Events`, or that delegate, without calling the existing one, this logging stops.
 
 ### Composite opaque and JWT bearer credentials
 

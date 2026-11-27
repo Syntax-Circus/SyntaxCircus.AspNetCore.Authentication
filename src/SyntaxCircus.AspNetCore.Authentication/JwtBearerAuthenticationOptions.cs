@@ -81,13 +81,16 @@ public sealed class JwtBearerAuthenticationOptions
     /// <c>HttpContext.RequestServices</c>'s <c>ILoggerFactory</c>; a no-op if unavailable). The logged
     /// message includes the exception (type, message, and IDX code), and this scheme's configured
     /// <c>ValidAudiences</c>/<c>ValidAudience</c> and <c>ValidIssuers</c>/<c>ValidIssuer</c>
-    /// (comma-joined configuration values, not secrets) — this is intentionally production-safe: the
-    /// token, the <c>Authorization</c> header, and other request headers are never logged. Intended
-    /// for diagnosing failures that would otherwise reach the caller as an opaque
-    /// <c>WWW-Authenticate: Bearer error="invalid_token"</c> with no server-side trace, e.g. the
-    /// IdentityModel quirk where <c>SecurityTokenInvalidAudienceException.InvalidAudience</c> isn't
-    /// populated by <c>JsonWebTokenHandler</c>. Defaults to <see langword="false"/> (opt-in) so
-    /// upgrading without touching config produces no behavior change. When both this and
+    /// (comma-joined configuration values, not secrets). The raw token, the <c>Authorization</c>
+    /// header and other request headers are not added to the entry, but the exception is logged whole,
+    /// and its message can include values taken from the token (such as its issuer, expiry time or key
+    /// ID). Intended for diagnosing failures that leave no reason in the server logs, e.g. a
+    /// <c>WWW-Authenticate</c> response saying <c>The audience '(null)' is invalid</c>: IdentityModel
+    /// removes audience values from its audience errors by default (see the
+    /// <c>Switch.Microsoft.IdentityModel.DoNotScrubExceptions</c> AppContext switch). Applies to the
+    /// primary scheme only, and only to <c>OnAuthenticationFailed</c>. Defaults to
+    /// <see langword="false"/> (opt-in) so upgrading without touching config produces no behavior
+    /// change. When both this and
     /// <see cref="LogAuthenticationFailuresInDevelopment"/> are <see langword="true"/>, only a single
     /// handler is installed and only one entry is logged per failure, at Warning (not Warning and
     /// Debug) — same chaining behavior as <see cref="LogAuthenticationFailuresInDevelopment"/>
